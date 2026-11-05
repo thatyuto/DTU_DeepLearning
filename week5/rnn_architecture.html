@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Week 5 · 类与方法怎么连在一起</title>
+  <style>
+    :root {
+      --bg: #080a10;
+      --text: #f1f3f8;
+      --muted: #8f98aa;
+      --panel: #10141d;
+      --line: rgba(255,255,255,.1);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+      font-family: ui-sans-serif, system-ui, sans-serif; }
+    header {
+      position: sticky; top: 0; z-index: 4;
+      padding: 12px 20px 10px;
+      background: rgba(8,10,16,.94);
+      border-bottom: 1px solid var(--line);
+    }
+    header h1 { margin: 0; font-size: 15px; font-weight: 650; }
+    header p { margin: 4px 0 10px; color: var(--muted); font-size: 12.5px; }
+    .path {
+      display: flex; gap: 6px; flex-wrap: wrap;
+    }
+    .path button {
+      background: #161b27; color: #c9d0dc; border: 1px solid var(--line);
+      border-radius: 999px; padding: 5px 10px; font-size: 11.5px; cursor: pointer;
+    }
+    .path button:hover, .path button.on { background: #2a3348; color: #fff; border-color: #8ea2c8; }
+    main { display: grid; grid-template-columns: 1fr 360px; height: calc(100% - 96px); }
+    #space { overflow: auto; padding: 8px 8px 24px; }
+    svg { display: block; margin: 0 auto; }
+    .disk { fill: rgba(255,255,255,.035); stroke: rgba(255,255,255,.14); }
+    .disk.hot { fill: rgba(255,255,255,.07); stroke: #fff; }
+    .ring { fill: none; stroke: rgba(255,255,255,.09); stroke-dasharray: 2 6; }
+    .sys-title { fill: var(--muted); font-size: 10px; letter-spacing: .14em; text-anchor: middle; text-transform: uppercase; }
+    .ball { cursor: pointer; }
+    .ball circle { stroke: rgba(0,0,0,.25); stroke-width: 1; }
+    .ball text { fill: #fff; font-size: 10.5px; font-weight: 650; text-anchor: middle; pointer-events: none; }
+    .ball.dim { opacity: .18; }
+    .ball.on circle { stroke: #fff; stroke-width: 2; }
+    .edge { fill: none; stroke: #d7e2f5; stroke-width: 1.8; marker-end: url(#arr); opacity: 0; }
+    .edge.show { opacity: .9; }
+    .elabel { fill: #e8eef8; font-size: 11px; font-weight: 600; opacity: 0; }
+    .elabel.show { opacity: 1; }
+    aside {
+      border-left: 1px solid var(--line); background: var(--panel);
+      padding: 16px 16px 28px; overflow: auto;
+    }
+    aside h2 { margin: 0 0 4px; font-size: 20px; }
+    .tag { font-size: 11px; color: var(--muted); margin-bottom: 10px; }
+    h3 { margin: 14px 0 6px; font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+    aside p { margin: 0; font-size: 13.5px; line-height: 1.55; color: #d5dbe6; }
+    aside ul { margin: 0; padding-left: 16px; font-size: 13px; line-height: 1.55; color: #d5dbe6; }
+    aside li { margin: 4px 0; cursor: pointer; }
+    aside li:hover { color: #fff; }
+    aside pre {
+      margin: 0; padding: 10px 12px; border-radius: 8px;
+      background: #0a0d14; border: 1px solid var(--line);
+      font-size: 12px; line-height: 1.45; white-space: pre-wrap;
+    }
+    .empty { color: var(--muted); font-size: 13px; line-height: 1.6; }
+    @media (max-width: 980px) {
+      main { grid-template-columns: 1fr; }
+      aside { min-height: 280px; border-left: 0; border-top: 1px solid var(--line); }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>学 RNN 时：前面的类后来还会用到</h1>
+    <p>点一个球：图上只亮「它依赖谁 / 谁会调用它」。右侧写作用，避免学到后面忘了前面。</p>
+    <div class="path" id="path"></div>
+  </header>
+  <main>
+    <div id="space"><svg id="g" viewBox="0 0 1280 820" width="1280" height="820"></svg></div>
+    <aside id="panel"><p class="empty">点任意小球。例如学到 <b>forward_step</b> 时，会看到它还在用你前面写的 <b>DenseLayer.forward</b> 和 <b>Var</b>。</p></aside>
+  </main>
+  <script>
+    const items = {
+      generate_dataset: {
+        title: "generate_dataset", tag: "函数 · 数据",
+        why: "造玩具句子。后面所有训练、one-hot、RNN 都吃这个列表。",
+        use: "sequences = generate_dataset()\n# ['a','a','b','b','EOS']",
+        uses: [], usedBy: ["sequences_to_dicts", "create_datasets"]
+      },
+      sequences_to_dicts: {
+        title: "sequences_to_dicts", tag: "函数 · 数据",
+        why: "给每个词一个编号。后面 one_hot_encode 全靠 word_to_idx。",
+        use: "word_to_idx, idx_to_word, n, vocab_size = sequences_to_dicts(sequences)",
+        uses: ["generate_dataset"], usedBy: ["one_hot_encode", "one_hot_encode_sequence", "create_datasets"]
+      },
+      Dataset: {
+        title: "Dataset", tag: "类 · 数据",
+        why: "把句子存成 (输入, 目标)。training_set[n] 就是一对词序列，还不是数字。",
+        use: "X, y = training_set[0]\n# X = 去掉最后一个词\n# y = 去掉第一个词（下一个词）",
+        uses: ["create_datasets"], usedBy: ["one_hot_encode_sequence"]
+      },
+      create_datasets: {
+        title: "create_datasets", tag: "函数 · 数据",
+        why: "切 train/val/test，并把每句错开一位，用来预测下一个词。",
+        use: "training_set, validation_set, test_set = create_datasets(sequences, Dataset)",
+        uses: ["generate_dataset", "sequences_to_dicts"], usedBy: ["Dataset"]
+      },
+      one_hot_encode: {
+        title: "one_hot_encode", tag: "函数 · 数据",
+        why: "一个词编号 → 一个 one-hot 向量（Var）。网络不能直接吃 'a'。",
+        use: "one_hot_encode(word_to_idx['a'], vocab_size)\n# [[Var(1), Var(0), Var(0), Var(0)]]",
+        uses: ["sequences_to_dicts", "Var", "nparray_to_Var"], usedBy: ["one_hot_encode_sequence"]
+      },
+      one_hot_encode_sequence: {
+        title: "one_hot_encode_sequence", tag: "函数 · 数据",
+        why: "整句编码。训练时 encoded_*_x 就是它；freestyle 生成时也会再调用。",
+        use: "one_hot_encode_sequence(['a','b'], vocab_size)",
+        uses: ["one_hot_encode", "sequences_to_dicts", "Var_to_nparray"], usedBy: ["forward_batch", "freestyle", "MyRecurrentNet"]
+      },
+      Var: {
+        title: "Var", tag: "类 · 自动求导",
+        why: "Nanograd 的最小单位：一个数 + 梯度。权重、隐藏状态、loss 都是 Var。忘了它，后面 backward 会看不懂。",
+        use: "a = Var(1.0)\nb = a.tanh()\nb.backward()  # 给 a.grad 填上数",
+        uses: [], usedBy: ["DenseLayer", "RNNLayer", "forward", "backward", "one_hot_encode"]
+      },
+      backward: {
+        title: "backward", tag: "Var 方法",
+        why: "从结果往回传梯度。RNN 里这就是 BPTT：梯度顺着时间走回去。",
+        use: "loss.backward()\n# 练习 c：output[0][0][0].backward()",
+        uses: ["Var"], usedBy: ["sequence_loss", "update_parameters"]
+      },
+      nparray_to_Var: {
+        title: "nparray_to_Var", tag: "函数",
+        why: "NumPy → Var 嵌套列表。one_hot_encode 最后一步会用。",
+        use: "nparray_to_Var(np.array([[1., 0., 0., 0.]]))",
+        uses: ["Var"], usedBy: ["one_hot_encode"]
+      },
+      Var_to_nparray: {
+        title: "Var_to_nparray", tag: "函数",
+        why: "Var 列表 → 普通数组。打印、argmax、画图时用。",
+        use: "idx = np.argmax(Var_to_nparray(outputs[0][t]))",
+        uses: ["Var"], usedBy: ["one_hot_encode_sequence", "freestyle"]
+      },
+      DenseLayer: {
+        title: "DenseLayer", tag: "类 · 零件",
+        why: "全连接层。RNN 不会自己做矩阵乘：U、V、W、LSTM 的门，全是 DenseLayer。后面看到 in_hid_layer，就是它。",
+        use: "DenseLayer(n_in, n_out, lambda x: x.tanh())\n# 权重形状：n_in 行 × n_out 列",
+        uses: ["Var"], usedBy: ["RNNLayer", "LSTMLayer", "forward", "fwd_seq"]
+      },
+      forward: {
+        title: "DenseLayer.forward", tag: "方法 · 最常用零件",
+        why: "一个向量进，一个向量出。公式里的 Ux、Vh、Wh 都是这一次调用。学 RNNLayer 时会再次用到。",
+        use: "out = layer.forward(vec)\n# node_j = act(b_j + Σ_i x_i W[i][j])",
+        uses: ["DenseLayer", "Var"], usedBy: ["forward_step", "fwd_seq", "lstm_step"]
+      },
+      fwd_seq: {
+        title: "DenseLayer.forward_sequence", tag: "方法",
+        why: "对每个时间步各做一次 forward，步之间不传记忆。输出层把每个 h_t 变成 o_t 时用它。",
+        use: "layer.forward_sequence([h0, h1, h2])  # → [o0, o1, o2]",
+        uses: ["forward"], usedBy: ["forward_batch"]
+      },
+      RNNLayer: {
+        title: "RNNLayer", tag: "类 · 本周核心",
+        why: "循环层。里面两个 DenseLayer：in_hid_layer=U，hid_hid_layer=V。后面训练、freestyle、和 LSTM 对比，都还是它。",
+        use: "RNNLayer(n_in, n_hid, lambda x: x.tanh())\nNN = [rnn, DenseLayer(n_hid, vocab_size, lambda x: x.identity())]",
+        uses: ["DenseLayer", "Var"], usedBy: ["forward_step", "forward_sequence", "forward_batch"]
+      },
+      forward_step: {
+        title: "RNNLayer.forward_step", tag: "方法 · 一步记忆",
+        why: "只算一个时间步：h_t = tanh(U x_t + V h_{t-1})。input 是当前词（one-hot），input_hid 是上一时刻的 h。",
+        use: "in_hids  = self.in_hid_layer.forward(input)\nhid_hids = self.hid_hid_layer.forward(input_hid)\nhids.append(act_fn(in_hids[i] + hid_hids[i]))",
+        uses: ["forward", "RNNLayer"], usedBy: ["forward_sequence"]
+      },
+      forward_sequence: {
+        title: "RNNLayer.forward_sequence", tag: "方法 · 整句",
+        why: "把一步步串起来。hid 会传到下一步。学到训练循环、freestyle 时还会调用它。",
+        use: "hid = self.initial_hid\nfor x_t in input:\n    hid = self.forward_step(x_t, hid)",
+        uses: ["forward_step", "RNNLayer"], usedBy: ["forward_batch", "freestyle"]
+      },
+      LSTMLayer: {
+        title: "LSTMLayer", tag: "类",
+        why: "带门的 RNN。接口和 RNNLayer 一样走 forward_sequence，所以训练循环几乎不用改。",
+        use: "NN = [LSTMLayer(4, 2, lambda x: x.tanh()), DenseLayer(2, 4, ...)]",
+        uses: ["DenseLayer", "forward"], usedBy: ["lstm_step", "lstm_seq", "forward_batch"]
+      },
+      lstm_step: {
+        title: "LSTMLayer.forward_step", tag: "方法",
+        why: "比 RNN 多一个细胞状态 c。门决定记什么、忘什么。",
+        use: "c_t = c_{t-1} * f + g * i\nh_t = tanh(c_t) * o",
+        uses: ["forward", "LSTMLayer"], usedBy: ["lstm_seq"]
+      },
+      lstm_seq: {
+        title: "LSTMLayer.forward_sequence", tag: "方法",
+        why: "同时传递 h 和 c。forward_batch 对 LSTM 和 RNN 走同一条调用链。",
+        use: "hid, c = self.forward_step(input[i], hid, c)",
+        uses: ["lstm_step"], usedBy: ["forward_batch"]
+      },
+      forward_batch: {
+        title: "forward_batch", tag: "函数 · 训练入口",
+        why: "一批句子穿过整个 NN。RNN/LSTM 走各自的 forward_sequence，输出层走 DenseLayer.forward_sequence。",
+        use: "output = forward_batch(encoded_training_set_x[:8], NN)",
+        uses: ["forward_sequence", "fwd_seq", "one_hot_encode_sequence", "lstm_seq"], usedBy: ["sequence_loss", "freestyle"]
+      },
+      sequence_loss: {
+        title: "sequence_loss", tag: "函数",
+        why: "每一步都算对错，再加起来。backward 从这里开始。",
+        use: "loss = sequence_loss(output, encoded_y, cross_entropy_loss_sequence)\nloss.backward()",
+        uses: ["forward_batch", "Var", "backward"], usedBy: ["update_parameters"]
+      },
+      update_parameters: {
+        title: "update_parameters", tag: "函数",
+        why: "SGD：用梯度改权重。梯度来自 Var.backward。",
+        use: "update_parameters(parameters(NN), LR)\nzero_gradients(parameters(NN))",
+        uses: ["backward", "parameters"], usedBy: []
+      },
+      parameters: {
+        title: "parameters", tag: "函数",
+        why: "把各层权重收成一列，方便统一更新。里面的 Var 就是前面 DenseLayer / RNNLayer 的 weights。",
+        use: "params = parameters(NN)",
+        uses: ["DenseLayer", "RNNLayer"], usedBy: ["update_parameters"]
+      },
+      freestyle: {
+        title: "freestyle", tag: "函数 · 生成",
+        why: "用训练好的网接着写词。会再次用 one_hot、forward_batch、stored_hid。",
+        use: "freestyle(NN, sentence='a a b')",
+        uses: ["forward_batch", "one_hot_encode_sequence", "Var_to_nparray", "forward_sequence"], usedBy: []
+      },
+      MyRecurrentNet: {
+        title: "MyRecurrentNet", tag: "类 · PyTorch",
+        why: "同一任务的官方实现：nn.LSTM 代替你手写的门。输入仍是 one-hot。",
+        use: "self.lstm = nn.LSTM(vocab_size, 50)\nx, (h, c) = self.lstm(x)",
+        uses: ["one_hot_encode_sequence"], usedBy: []
+      }
+    };
+
+    const links = [
+      ["generate_dataset", "sequences_to_dicts", "造出 sequences"],
+      ["sequences_to_dicts", "one_hot_encode", "提供 word_to_idx"],
+      ["create_datasets", "Dataset", "装进 Dataset"],
+      ["Dataset", "one_hot_encode_sequence", "取出文字序列"],
+      ["one_hot_encode", "one_hot_encode_sequence", "逐词编码"],
+      ["Var", "DenseLayer", "权重都是 Var"],
+      ["DenseLayer", "forward", "方法"],
+      ["forward", "fwd_seq", "每步调用"],
+      ["DenseLayer", "RNNLayer", "U 和 V 各一层"],
+      ["RNNLayer", "forward_step", "方法"],
+      ["forward", "forward_step", "算 Ux 和 Vh"],
+      ["forward_step", "forward_sequence", "逐步循环"],
+      ["one_hot_encode_sequence", "forward_batch", "输入网络"],
+      ["forward_sequence", "forward_batch", "RNN 前向"],
+      ["fwd_seq", "forward_batch", "输出层 o_t"],
+      ["forward_batch", "sequence_loss", "拿预测"],
+      ["sequence_loss", "backward", "loss.backward"],
+      ["backward", "update_parameters", "用 .grad 更新"],
+      ["forward", "lstm_step", "四个门"],
+      ["lstm_step", "lstm_seq", "逐步循环"],
+      ["lstm_seq", "forward_batch", "LSTM 前向"],
+      ["forward_sequence", "freestyle", "接着生成"],
+      ["one_hot_encode_sequence", "MyRecurrentNet", "同样的编码"],
+    ];
+
+    const pathSteps = [
+      { name: "1 造数据", ids: ["generate_dataset", "sequences_to_dicts", "create_datasets", "Dataset"] },
+      { name: "2 one-hot", ids: ["one_hot_encode", "one_hot_encode_sequence", "Var"] },
+      { name: "3 DenseLayer 零件", ids: ["DenseLayer", "forward", "fwd_seq"] },
+      { name: "4 RNN 一步/整句", ids: ["RNNLayer", "forward_step", "forward_sequence"] },
+      { name: "5 训练", ids: ["forward_batch", "sequence_loss", "backward", "update_parameters"] },
+      { name: "6 生成", ids: ["freestyle", "forward_sequence", "one_hot_encode_sequence"] },
+      { name: "7 LSTM", ids: ["LSTMLayer", "lstm_step", "lstm_seq", "forward"] },
+      { name: "8 PyTorch", ids: ["MyRecurrentNet", "one_hot_encode_sequence"] },
+    ];
+
+    const systems = [
+      { title: "RNNLayer", cx: 640, cy: 400, R: 188, color: "#e8b04a",
+        moons: [
+          { id: "RNNLayer", label: "RNNLayer", r: 0, ang: 0, s: 34 },
+          { id: "forward_step", label: "forward_step", r: 78, ang: -18, s: 22 },
+          { id: "forward_sequence", label: "forward_sequence", r: 78, ang: 155, s: 20 },
+        ]},
+      { title: "DenseLayer", cx: 250, cy: 230, R: 132, color: "#5aa6ef",
+        moons: [
+          { id: "DenseLayer", label: "DenseLayer", r: 0, ang: 0, s: 26 },
+          { id: "forward", label: "forward", r: 60, ang: -25, s: 18 },
+          { id: "fwd_seq", label: "forward_seq", r: 60, ang: 150, s: 16 },
+        ]},
+      { title: "Var", cx: 1030, cy: 220, R: 118, color: "#b68cff",
+        moons: [
+          { id: "Var", label: "Var", r: 0, ang: 0, s: 24 },
+          { id: "backward", label: "backward", r: 55, ang: 20, s: 16 },
+        ]},
+      { title: "Data", cx: 220, cy: 620, R: 150, color: "#3dca9a",
+        moons: [
+          { id: "Dataset", label: "Dataset", r: 0, ang: 0, s: 22 },
+          { id: "one_hot_encode_sequence", label: "one_hot_seq", r: 64, ang: 55, s: 15 },
+          { id: "one_hot_encode", label: "one_hot", r: 64, ang: 200, s: 14 },
+          { id: "generate_dataset", label: "generate", r: 118, ang: 10, s: 12 },
+          { id: "sequences_to_dicts", label: "to_dicts", r: 118, ang: 145, s: 12 },
+          { id: "create_datasets", label: "create_sets", r: 118, ang: 250, s: 12 },
+        ]},
+      { title: "Train", cx: 1060, cy: 620, R: 140, color: "#ff8f5a",
+        moons: [
+          { id: "forward_batch", label: "forward_batch", r: 0, ang: 0, s: 22 },
+          { id: "sequence_loss", label: "loss", r: 62, ang: -50, s: 15 },
+          { id: "update_parameters", label: "update", r: 62, ang: 95, s: 14 },
+          { id: "freestyle", label: "freestyle", r: 112, ang: 200, s: 13 },
+        ]},
+      { title: "LSTM", cx: 500, cy: 140, R: 108, color: "#6ed4ff",
+        moons: [
+          { id: "LSTMLayer", label: "LSTMLayer", r: 0, ang: 0, s: 20 },
+          { id: "lstm_step", label: "forward_step", r: 52, ang: 40, s: 13 },
+          { id: "lstm_seq", label: "forward_seq", r: 52, ang: 210, s: 13 },
+        ]},
+      { title: "PyTorch", cx: 790, cy: 700, R: 88, color: "#ff6f80",
+        moons: [
+          { id: "MyRecurrentNet", label: "MyRecurrentNet", r: 0, ang: 0, s: 20 },
+        ]},
+    ];
+
+    const svg = document.getElementById("g");
+    const ns = "http://www.w3.org/2000/svg";
+    const pos = {};
+    function el(name, attrs) {
+      const n = document.createElementNS(ns, name);
+      for (const [k,v] of Object.entries(attrs)) n.setAttribute(k,v);
+      svg.appendChild(n);
+      return n;
+    }
+    el("defs", {});
+    const defs = svg.querySelector("defs");
+    defs.innerHTML = `<marker id="arr" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#d7e2f5"/></marker>`;
+
+    const edgeLayer = el("g", { id: "edges" });
+    const edgeDraw = [];
+
+    systems.forEach(sys => {
+      el("circle", { class: "disk", cx: sys.cx, cy: sys.cy, r: sys.R, "data-sys": sys.title });
+      [...new Set(sys.moons.map(m => m.r).filter(r => r > 0))].forEach(r =>
+        el("circle", { class: "ring", cx: sys.cx, cy: sys.cy, r })
+      );
+      const t = el("text", { class: "sys-title", x: sys.cx, y: sys.cy - sys.R - 12 });
+      t.textContent = sys.title;
+    });
+
+    const balls = {};
+    systems.forEach(sys => {
+      sys.moons.forEach(m => {
+        const rad = m.ang * Math.PI / 180;
+        const x = sys.cx + m.r * Math.cos(rad);
+        const y = sys.cy + m.r * Math.sin(rad);
+        pos[m.id] = { x, y };
+        const g = document.createElementNS(ns, "g");
+        g.setAttribute("class", "ball");
+        g.dataset.id = m.id;
+        g.setAttribute("transform", `translate(${x},${y})`);
+        const c = document.createElementNS(ns, "circle");
+        c.setAttribute("r", m.s); c.setAttribute("fill", sys.color);
+        c.setAttribute("cx", 0); c.setAttribute("cy", 0);
+        const tx = document.createElementNS(ns, "text");
+        tx.setAttribute("y", 4);
+        tx.textContent = m.label.length > 14 ? m.label.slice(0,13)+"…" : m.label;
+        g.appendChild(c); g.appendChild(tx);
+        svg.appendChild(g);
+        balls[m.id] = g;
+      });
+    });
+
+    function curve(a, b) {
+      const p1 = pos[a], p2 = pos[b];
+      if (!p1 || !p2) return "";
+      const mx = (p1.x + p2.x) / 2, my = (p1.y + p2.y) / 2 - 30;
+      return `M ${p1.x} ${p1.y} Q ${mx} ${my} ${p2.x} ${p2.y}`;
+    }
+    links.forEach(([a,b,label]) => {
+      const p = document.createElementNS(ns, "path");
+      p.setAttribute("class", "edge");
+      p.setAttribute("d", curve(a,b));
+      p.dataset.a = a; p.dataset.b = b;
+      svg.insertBefore(p, svg.querySelector(".ball"));
+      const p1 = pos[a], p2 = pos[b];
+      if (!p1 || !p2) return;
+      const tx = document.createElementNS(ns, "text");
+      tx.setAttribute("class", "elabel");
+      tx.setAttribute("x", (p1.x+p2.x)/2);
+      tx.setAttribute("y", (p1.y+p2.y)/2 - 28);
+      tx.textContent = label;
+      tx.dataset.a = a; tx.dataset.b = b;
+      svg.insertBefore(tx, svg.querySelector(".ball"));
+      edgeDraw.push(p);
+    });
+
+    const panel = document.getElementById("panel");
+    const pretty = id => (items[id] && items[id].title) || id;
+
+    function select(id) {
+      const it = items[id];
+      if (!it) return;
+      const keep = new Set([id, ...it.uses, ...it.usedBy]);
+      Object.entries(balls).forEach(([k, g]) => {
+        g.classList.toggle("dim", !keep.has(k));
+        g.classList.toggle("on", k === id);
+      });
+      svg.querySelectorAll(".edge, .elabel").forEach(e => {
+        const on = e.dataset.a === id || e.dataset.b === id;
+        e.classList.toggle("show", on);
+      });
+      panel.innerHTML = `
+        <div class="tag">${it.tag}</div>
+        <h2>${it.title}</h2>
+        <h3>它是干什么的</h3>
+        <p>${it.why}</p>
+        <h3>学到后面谁还会用它</h3>
+        <ul>${it.usedBy.length ? it.usedBy.map(u => `<li data-go="${u}">→ ${pretty(u)}</li>`).join("") : "<li>（终端：不再被别人调用）</li>"}</ul>
+        <h3>它自己还依赖前面什么</h3>
+        <ul>${it.uses.length ? it.uses.map(u => `<li data-go="${u}">← ${pretty(u)}</li>`).join("") : "<li>（起点）</li>"}</ul>
+        <h3>怎么写</h3>
+        <pre>${it.use.replace(/</g,"&lt;")}</pre>
+      `;
+      panel.querySelectorAll("[data-go]").forEach(li => {
+        li.onclick = () => select(li.dataset.go);
+      });
+    }
+
+    Object.values(balls).forEach(g => {
+      g.addEventListener("click", () => select(g.dataset.id));
+      g.addEventListener("mouseenter", () => select(g.dataset.id));
+    });
+
+    const pathEl = document.getElementById("path");
+    pathSteps.forEach((s, i) => {
+      const b = document.createElement("button");
+      b.textContent = s.name;
+      b.onclick = () => {
+        [...pathEl.children].forEach(x => x.classList.remove("on"));
+        b.classList.add("on");
+        const keep = new Set(s.ids);
+        Object.entries(balls).forEach(([k,g]) => {
+          g.classList.toggle("dim", !keep.has(k));
+          g.classList.toggle("on", keep.has(k));
+        });
+        svg.querySelectorAll(".edge, .elabel").forEach(e => {
+          e.classList.toggle("show", keep.has(e.dataset.a) && keep.has(e.dataset.b));
+        });
+        panel.innerHTML = `<div class="tag">学习顺序</div><h2>${s.name}</h2><p>这一步会用到这些球。点其中一个看「后面谁还会用它」。</p><ul>${s.ids.map(id => `<li data-go="${id}">${pretty(id)}</li>`).join("")}</ul>`;
+        panel.querySelectorAll("[data-go]").forEach(li => li.onclick = () => select(li.dataset.go));
+      };
+      pathEl.appendChild(b);
+    });
+  </script>
+</body>
+</html>
